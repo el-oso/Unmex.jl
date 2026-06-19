@@ -46,10 +46,22 @@ See the [documentation](https://el-oso.github.io/Unmex.jl/dev) for how it works.
 
 ## Status
 
-A working **MVP**: real `Float64` scalars / vectors / matrices round-trip in and
-out. MEX that call back into MATLAB (`mexCallMATLAB`, engine features) need a live
-interpreter and are out of scope.
+The full self-contained MATLAB type set round-trips in and out — the numeric tower
+(int8/16/32/64, uint8/16/32/64, single, double), complex, logical, char/string,
+string arrays, sparse, struct, and cell. MEX that call back into MATLAB
+(`mexCallMATLAB` for a real builtin, `mexEvalString`, …) need a live interpreter;
+the host can't fabricate those, but it fails **gracefully** — a catchable Julia
+error instead of a crash. Function handles, classdef objects, and opaque types are
+interpreter-backed and unsupported.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Provenance & trademarks
+
+This software is an independent, clean-room implementation of the publicly
+documented MATLAB® C Matrix API — it contains no MathWorks headers, source, or
+binaries. MATLAB and MEX are trademarks of The MathWorks, Inc.; this project is
+not affiliated with, sponsored by, or endorsed by The MathWorks, Inc. See
+[NOTICE](NOTICE) for details.

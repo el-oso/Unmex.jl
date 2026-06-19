@@ -1,0 +1,29 @@
+NOTICE
+======
+
+Provenance
+----------
+This project interoperates with MATLAB(R) MEX files by way of an independent,
+clean-room implementation of the publicly documented MATLAB C Matrix API (the
+`mx*` and `mex*` functions and the `mxArray` type), derived solely from
+MathWorks' public API documentation. It contains:
+
+  * NO MathWorks header files (e.g. mex.h, matrix.h),
+  * NO MathWorks source code, and
+  * NO MathWorks binaries or libraries.
+
+All function prototypes are declared independently. The purpose is
+interoperability, not the reproduction of MATLAB or any of its components.
+
+Unmex.jl bundles `runtime/libmxhost.c`, a from-scratch host implementation of
+the `libmx`/`libmex` symbols a MEX file resolves at load time, so MEX files can
+be loaded and called from Julia without a MATLAB installation. It calls back
+into MATLAB only for behavior that lives in the MATLAB interpreter; such calls
+raise a clear error rather than attempting to emulate the interpreter.
+
+Trademarks
+----------
+MATLAB and MEX are trademarks of The MathWorks, Inc. This project is not
+affiliated with, sponsored by, or endorsed by The MathWorks, Inc. The
+trademarks are used here only descriptively, to identify the interface with
+which this software interoperates.
