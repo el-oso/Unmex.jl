@@ -13,10 +13,10 @@
 # combinations. Function handles / classdef objects / opaque types are interpreter-
 # backed and unsupported (they have no data layout in the C Matrix API).
 #
-# Known limitation: a `String` *nested inside* a cell or struct does not round-trip —
-# LibMx's `StringMarshaler.store!` is a no-op (top-level strings go through a
-# `store_result` override instead), so a nested string is created empty. Top-level
-# strings and `Matrix{String}` (string arrays) are fine.
+# Known limitation: a nested `Matrix{String}` (string array) inside a cell/struct does
+# not round-trip — `StringArrayMarshaler.store!` is a placeholder (its output goes via a
+# `store_result` override). Scalar `String`s nest fine (cells and structs special-case
+# them), as do top-level strings and top-level string arrays.
 
 const _INT_CLASS_TYPE = Dict{Cint, DataType}(
     mxINT8_CLASS => Int8, mxUINT8_CLASS => UInt8,

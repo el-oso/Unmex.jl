@@ -80,11 +80,12 @@ end
         y = rt((x = 3.0, v = [1.0, 2.0]))
         @test y.x == 3.0 && y.v == reshape([1.0, 2.0], 2, 1)
     end
-    @testset "cell (Tuple → Array{Any})" begin
-        # Numeric/array cell elements round-trip. (Strings *inside* a cell/struct are
-        # a LibMx limitation — StringMarshaler.store! is a no-op — see converters.jl.)
-        y = rt((1.0, Int32(7), [2.0 3.0]))
-        @test y[1] == 1.0 && y[2] === Int32(7) && y[3] == [2.0 3.0]
+    @testset "cell (Tuple → Array{Any}), incl. nested String + nested cell" begin
+        y = rt((1.0, "x", Int32(7), [2.0 3.0]))
+        @test y[1] == 1.0 && y[2] == "x" && y[3] === Int32(7) && y[4] == [2.0 3.0]
+        # nested cell with a string round-trips too
+        z = rt(("a", (2.0, "b")))
+        @test z[1] == "a" && z[2][1] == 2.0 && z[2][2] == "b"
     end
 end
 
