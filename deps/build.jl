@@ -1,13 +1,9 @@
-# Build the host libmx/libmex (`libmxhost`) that provides the mx*/mex* symbols a
-# MEX resolves at load time. Plain `cc -shared` — no MATLAB, no headers.
+# Build the libmx/libmex host that provides the mx*/mex* symbols a MEX resolves at
+# load time. The host C source is owned by LibMx (the single source of truth shared
+# with Mexicah's tests); compile it into runtime/ where Unmex.__init__ dlopens it.
 using Libdl
+using LibMx
 
-const ROOT = dirname(@__DIR__)
-const SRC = joinpath(ROOT, "runtime", "libmxhost.c")
-const OUT = joinpath(ROOT, "runtime", "libmxhost.$(Libdl.dlext)")
-
-cc = something(Sys.which("cc"), Sys.which("gcc"), Sys.which("clang"))
-cc === nothing && error("Unmex/build: no C compiler (cc/gcc/clang) found on PATH")
-
-run(`$cc -O2 -shared -fPIC -o $OUT $SRC`)
-@info "Unmex: built host libmx" OUT
+const OUT = joinpath(dirname(@__DIR__), "runtime", "libmxhost.$(Libdl.dlext)")
+LibMx.build_libmxhost(OUT)
+@info "Unmex: built host libmx from LibMx's canonical source" OUT
