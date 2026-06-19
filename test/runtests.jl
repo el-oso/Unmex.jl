@@ -123,6 +123,44 @@ end
     end
 end
 
+@testset "Phase 1 — new mx* functions and _730 aliases" begin
+
+    @testset "mxMalloc/mxSetData/mxSetM/mxSetN (build_via_setm)" begin
+        mex = open_mex(build_cmex("build_via_setm"))
+        # Scalar 5.0 → should return [1.0 2.0 3.0 4.0 5.0]
+        result = call(mex, 5.0)
+        @test result == reshape(1.0:5.0, 1, 5)
+        # Scalar 1.0 → 1x1 matrix which converters return as scalar 1.0
+        @test call(mex, 1.0) == 1.0
+    end
+
+    @testset "mxArrayToString + mxFree (arraytostring)" begin
+        mex = open_mex(build_cmex("arraytostring"))
+        # "hello" has 5 chars; mxArrayToString should return those 5 chars
+        @test call(mex, "hello") == 5.0
+        @test call(mex, "ab") == 2.0
+        @test call(mex, "") == 0.0
+    end
+
+    @testset "mxGetFieldNumber + mxGetFieldByNumber (struct_fieldnum)" begin
+        mex = open_mex(build_cmex("struct_fieldnum"))
+        # Build a struct with fields x=1.0, y=42.0 and verify MEX returns y
+        s = (x = 1.0, y = 42.0)
+        @test call(mex, s) == 42.0
+        # Try with a different y value
+        @test call(mex, (x = -3.0, y = 7.0)) == 7.0
+    end
+
+    @testset "_730 large-array aliases (proxy730)" begin
+        mex = open_mex(build_cmex("proxy730"))
+        # N=4 → [1.0 2.0 3.0 4.0]
+        result = call(mex, 4.0)
+        @test result == reshape(1.0:4.0, 1, 4)
+        @test call(mex, 1.0) == 1.0
+    end
+
+end
+
 @testset "graceful failure on interpreter-only MEX (no crash)" begin
     # These reference interpreter-only symbols. Thanks to the host stubs they LOAD
     # (dlopen resolves the symbols), and raise a catchable Julia error when run —

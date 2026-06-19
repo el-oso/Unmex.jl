@@ -1,18 +1,15 @@
 /*
- * libmx_stub.c — Minimal libmx/libmex stub for testing Mexicah marshalers
- * without a MATLAB installation.
+ * libmxhost.c - Host libmx/libmex for Unmex: provides the mx- and mex- C symbols
+ * a MATLAB MEX file resolves at load time (dlopen with RTLD_NOW), so MEX files can
+ * be called from Julia without a MATLAB installation.
  *
- * When preloaded with RTLD_GLOBAL on Linux, bare ccall(:mxFoo, ...) resolves
- * to these implementations, enabling the :matlab-tagged test items to run
- * against the stub (no MATLAB license required).
+ * Phase 1 (host-completeness): includes all common mx functions that real-world
+ * MEX use, plus _730 large-array-API aliases that MATLAB-compiled MEX link against.
  *
- * Only Linux bare names are needed: @mxccall730 on Linux still expands to bare
- * names (the _730 suffix is Windows-only via _ccall_with_lib win_suffix="").
- *
- * The stub is intentionally simple: it allocates heap memory, stores metadata
- * in a flat struct, and returns raw pointers that the marshalers read/write.
- * It is NOT thread-safe and does NOT implement the full MATLAB C API — only
- * the ~50 functions exercised by marshaling.jl.
+ * C resource-management convention:
+ *   Heap-acquiring temporaries use __attribute__((cleanup(free_fn))) compiler scope
+ *   guards where practical. On paths that can raise (via mexErrMsgIdAndTxt/longjmp),
+ *   we free explicitly before raising -- cleanup handlers do NOT run through longjmp.
  */
 
 #include <stddef.h>
@@ -21,6 +18,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <math.h>
+#include <float.h>
 
 /* ── mxClassID constants (match MATLAB's enum) ──────────────────────────── */
 #define MX_UNKNOWN_CLASS   0
@@ -495,6 +494,291 @@ int mxAddField(mxArray pa, const char *fieldname) {
     return idx;
 }
 
+/* ── Memory management ───────────────────────────────────────────────────── */
+
+/* Thin wrappers over the system allocator — MEX code that calls mxMalloc/mxFree
+ * expects to hand the pointer back through mxFree, not free(), so keep symmetric. */
+void *mxMalloc(size_t n)               { return malloc(n); }
+void *mxCalloc(size_t n, size_t esz)   { return calloc(n, esz); }
+void *mxRealloc(void *ptr, size_t n)   { return realloc(ptr, n); }
+void  mxFree(void *ptr)                { free(ptr); }
+
+/* ── Field removal ───────────────────────────────────────────────────────── */
+
+void mxRemoveField(mxArray pa, int fieldnum) {
+    if (!pa || fieldnum < 0 || fieldnum >= pa->nfields) return;
+    /* Free all values in this column */
+    for (size_t e = 0; e < pa->nelems; e++)
+        mxDestroyArray(pa->fields[(size_t)fieldnum * pa->nelems + e]);
+    /* Free the field name */
+    free(pa->fieldnames[fieldnum]);
+    /* Shift remaining field names and data columns down */
+    int nf = pa->nfields;
+    for (int f = fieldnum; f < nf - 1; f++) {
+        pa->fieldnames[f] = pa->fieldnames[f + 1];
+        for (size_t e = 0; e < pa->nelems; e++)
+            pa->fields[(size_t)f * pa->nelems + e] =
+                pa->fields[(size_t)(f + 1) * pa->nelems + e];
+    }
+    pa->nfields--;
+    /* Shrink arrays (ignore realloc failure — stub, not production code) */
+    if (pa->nfields > 0) {
+        pa->fieldnames = (char **)realloc(pa->fieldnames,
+                                          (size_t)pa->nfields * sizeof(char *));
+        pa->fields = (mx_stub_t **)realloc(
+            pa->fields, (size_t)pa->nfields * pa->nelems * sizeof(mx_stub_t *));
+    } else {
+        free(pa->fieldnames); pa->fieldnames = NULL;
+        free(pa->fields);     pa->fields     = NULL;
+    }
+}
+
+/* ── Introspection ───────────────────────────────────────────────────────── */
+
+size_t mxGetElementSize(const mxArray pa) {
+    return pa ? element_size(pa->classid) : 0;
+}
+
+const char *mxGetClassName(const mxArray pa) {
+    if (!pa) return "unknown";
+    switch (pa->classid) {
+        case MX_DOUBLE_CLASS:  return "double";
+        case MX_SINGLE_CLASS:  return "single";
+        case MX_INT8_CLASS:    return "int8";
+        case MX_UINT8_CLASS:   return "uint8";
+        case MX_INT16_CLASS:   return "int16";
+        case MX_UINT16_CLASS:  return "uint16";
+        case MX_INT32_CLASS:   return "int32";
+        case MX_UINT32_CLASS:  return "uint32";
+        case MX_INT64_CLASS:   return "int64";
+        case MX_UINT64_CLASS:  return "uint64";
+        case MX_LOGICAL_CLASS: return "logical";
+        case MX_CHAR_CLASS:    return "char";
+        case MX_CELL_CLASS:    return "cell";
+        case MX_STRUCT_CLASS:  return "struct";
+        case MX_STRING_CLASS:  return "string";
+        default:               return "unknown";
+    }
+}
+
+int mxIsClass(const mxArray pa, const char *classname) {
+    return strcmp(mxGetClassName(pa), classname) == 0;
+}
+
+int mxIsEmpty(const mxArray pa)        { return !pa || pa->nelems == 0; }
+int mxIsScalar(const mxArray pa)       { return pa && pa->nelems == 1; }
+
+/* These always return 0 in the host — no interpreter, no function handle or objects. */
+int mxIsFunctionHandle(const mxArray pa) { (void)pa; return 0; }
+int mxIsObject(const mxArray pa)         { (void)pa; return 0; }
+int mxIsOpaque(const mxArray pa)         { (void)pa; return 0; }
+
+/* IEEE special values — same semantics as MATLAB's mxGetInf()/mxGetNaN()/mxGetEps(). */
+double mxGetInf(void) { return INFINITY;    }
+double mxGetNaN(void) { return NAN;         }
+double mxGetEps(void) { return DBL_EPSILON; }
+
+/* ── String conversion ───────────────────────────────────────────────────── */
+
+/* Return a newly malloc'd null-terminated char* from a char (uint16) array.
+ * Caller is responsible for freeing via mxFree (== free). */
+char *mxArrayToString(const mxArray pa) {
+    if (!pa || pa->classid != MX_CHAR_CLASS) return NULL;
+    size_t len = pa->nelems;
+    char *buf = (char *)malloc(len + 1);
+    if (!buf) return NULL;
+    const uint16_t *s = (const uint16_t *)pa->pr;
+    for (size_t i = 0; i < len; i++) buf[i] = s ? (char)s[i] : '\0';
+    buf[len] = '\0';
+    return buf;
+}
+
+/* mxArrayToUTF8String — identical for ASCII content; alias behaviour for the host. */
+char *mxArrayToUTF8String(const mxArray pa) { return mxArrayToString(pa); }
+
+/* ── Field accessors by number ───────────────────────────────────────────── */
+
+int mxGetFieldNumber(const mxArray pa, const char *name) {
+    if (!pa || !name) return -1;
+    for (int f = 0; f < pa->nfields; f++)
+        if (strcmp(pa->fieldnames[f], name) == 0) return f;
+    return -1;
+}
+
+mxArray mxGetFieldByNumber(const mxArray pa, size_t index, int fieldnum) {
+    if (!pa || fieldnum < 0 || fieldnum >= pa->nfields || index >= pa->nelems)
+        return NULL;
+    return pa->fields[(size_t)fieldnum * pa->nelems + index];
+}
+
+void mxSetFieldByNumber(mxArray pa, size_t index, int fieldnum, mxArray value) {
+    if (!pa || fieldnum < 0 || fieldnum >= pa->nfields || index >= pa->nelems)
+        return;
+    mxDestroyArray(pa->fields[(size_t)fieldnum * pa->nelems + index]);
+    pa->fields[(size_t)fieldnum * pa->nelems + index] = value;
+}
+
+/* ── Mutators ────────────────────────────────────────────────────────────── */
+
+void mxSetM(mxArray pa, size_t m) {
+    if (!pa) return;
+    pa->m = m;
+    if (pa->ndim >= 1 && pa->dims) pa->dims[0] = m;
+    pa->nelems = prod(pa->ndim, pa->dims);
+}
+
+void mxSetN(mxArray pa, size_t n) {
+    if (!pa) return;
+    pa->n = n;
+    if (pa->ndim >= 2 && pa->dims) pa->dims[1] = n;
+    pa->nelems = prod(pa->ndim, pa->dims);
+}
+
+int mxSetDimensions(mxArray pa, const size_t *dims, size_t ndim) {
+    if (!pa || !dims) return 1;
+    free(pa->dims);
+    pa->dims = (size_t *)malloc(ndim * sizeof(size_t));
+    if (!pa->dims) return 1;
+    memcpy(pa->dims, dims, ndim * sizeof(size_t));
+    pa->ndim  = ndim;
+    pa->m     = ndim >= 1 ? dims[0] : 1;
+    pa->n     = ndim >= 2 ? dims[1] : 1;
+    pa->nelems = prod(ndim, dims);
+    return 0;
+}
+
+/* mxSetData / mxSetPr — replace the real-data pointer (caller manages memory). */
+void mxSetData(mxArray pa, void *ptr)      { if (pa) pa->pr = ptr; }
+void mxSetPr(mxArray pa, double *ptr)      { if (pa) pa->pr = ptr; }
+void mxSetPi(mxArray pa, double *ptr)      { if (pa) pa->pi = ptr; }
+void mxSetImagData(mxArray pa, void *ptr)  { if (pa) pa->pi = ptr; }
+void mxSetIr(mxArray pa, size_t *ptr)      { if (pa) pa->ir = ptr; }
+void mxSetJc(mxArray pa, size_t *ptr)      { if (pa) pa->jc = ptr; }
+void mxSetNzmax(mxArray pa, size_t nzmax)  { if (pa) pa->nzmax = nzmax; }
+
+/* mxSetClassName — changes the classid to match the string if recognised. */
+int mxSetClassName(mxArray pa, const char *classname) {
+    if (!pa || !classname) return 1;
+    if      (strcmp(classname, "double")  == 0) pa->classid = MX_DOUBLE_CLASS;
+    else if (strcmp(classname, "single")  == 0) pa->classid = MX_SINGLE_CLASS;
+    else if (strcmp(classname, "int8")    == 0) pa->classid = MX_INT8_CLASS;
+    else if (strcmp(classname, "uint8")   == 0) pa->classid = MX_UINT8_CLASS;
+    else if (strcmp(classname, "int16")   == 0) pa->classid = MX_INT16_CLASS;
+    else if (strcmp(classname, "uint16")  == 0) pa->classid = MX_UINT16_CLASS;
+    else if (strcmp(classname, "int32")   == 0) pa->classid = MX_INT32_CLASS;
+    else if (strcmp(classname, "uint32")  == 0) pa->classid = MX_UINT32_CLASS;
+    else if (strcmp(classname, "int64")   == 0) pa->classid = MX_INT64_CLASS;
+    else if (strcmp(classname, "uint64")  == 0) pa->classid = MX_UINT64_CLASS;
+    else if (strcmp(classname, "logical") == 0) pa->classid = MX_LOGICAL_CLASS;
+    else if (strcmp(classname, "char")    == 0) pa->classid = MX_CHAR_CLASS;
+    else return 1;   /* unknown class name */
+    return 0;
+}
+
+/* ── Creation gaps ───────────────────────────────────────────────────────── */
+
+/* N-D cell array (mirrors mxCreateStructArray layout). */
+mxArray mxCreateCellArray(size_t ndim, const size_t *dims) {
+    mx_stub_t *p = alloc_stub();
+    p->classid = MX_CELL_CLASS;
+    p->ndim    = ndim;
+    p->dims    = (size_t *)malloc(ndim * sizeof(size_t));
+    memcpy(p->dims, dims, ndim * sizeof(size_t));
+    p->m       = ndim >= 1 ? dims[0] : 1;
+    p->n       = ndim >= 2 ? dims[1] : 1;
+    p->nelems  = prod(ndim, dims);
+    p->cells   = (mx_stub_t **)calloc(p->nelems ? p->nelems : 1, sizeof(mx_stub_t *));
+    return p;
+}
+
+mxArray mxCreateLogicalScalar(int val) {
+    mx_stub_t *p = make_numeric(1, 1, MX_LOGICAL_CLASS, 0);
+    *(uint8_t *)p->pr = val ? 1 : 0;
+    return p;
+}
+
+/* Build a 1×N char array from an array of C strings (like MATLAB's char(strs...)). */
+mxArray mxCreateCharMatrixFromStrings(size_t m, const char **strs) {
+    if (!strs || m == 0) {
+        size_t dims[2] = {0, 0};
+        return mxCreateCharArray(2, dims);
+    }
+    /* Find the maximum string length to determine N. */
+    size_t maxlen = 0;
+    for (size_t i = 0; i < m; i++) {
+        size_t l = strs[i] ? strlen(strs[i]) : 0;
+        if (l > maxlen) maxlen = l;
+    }
+    mx_stub_t *p = alloc_stub();
+    p->classid = MX_CHAR_CLASS;
+    p->ndim    = 2;
+    p->dims    = (size_t *)malloc(2 * sizeof(size_t));
+    p->dims[0] = m; p->dims[1] = maxlen;
+    p->m       = m;
+    p->n       = maxlen;
+    p->nelems  = m * maxlen;
+    size_t nelems_cm = m * maxlen;
+    p->pr      = calloc(nelems_cm > 0 ? nelems_cm : 1, sizeof(uint16_t));
+    uint16_t *d = (uint16_t *)p->pr;
+    /* MATLAB stores char matrices column-major: d[col*m + row] */
+    for (size_t r = 0; r < m; r++) {
+        const char *s = strs[r] ? strs[r] : "";
+        size_t slen   = strlen(s);
+        for (size_t c = 0; c < maxlen; c++)
+            d[c * m + r] = (c < slen) ? (uint16_t)(unsigned char)s[c] : (uint16_t)' ';
+    }
+    return p;
+}
+
+/* Uninitialised variants — like the numeric creators but skip calloc (use malloc). */
+mxArray mxCreateUninitNumericMatrix(size_t m, size_t n, int classid, int complex_flag) {
+    mx_stub_t *p = alloc_stub();
+    p->classid    = classid;
+    p->is_complex = complex_flag;
+    p->m          = m;
+    p->n          = n;
+    p->ndim       = 2;
+    p->dims       = (size_t *)malloc(2 * sizeof(size_t));
+    p->dims[0]    = m; p->dims[1] = n;
+    p->nelems     = m * n;
+    size_t esz    = element_size(classid);
+    p->pr         = malloc(p->nelems * esz + 1);   /* +1 to avoid 0-byte malloc */
+    if (complex_flag)
+        p->pi     = malloc(p->nelems * esz + 1);
+    return p;
+}
+
+mxArray mxCreateUninitNumericArray(size_t ndim, const size_t *dims,
+                                    int classid, int complex_flag) {
+    mx_stub_t *p = alloc_stub();
+    p->classid    = classid;
+    p->is_complex = complex_flag;
+    p->ndim       = ndim;
+    p->dims       = (size_t *)malloc(ndim * sizeof(size_t));
+    memcpy(p->dims, dims, ndim * sizeof(size_t));
+    p->m          = ndim >= 1 ? dims[0] : 1;
+    p->n          = ndim >= 2 ? dims[1] : 1;
+    p->nelems     = prod(ndim, dims);
+    size_t esz    = element_size(classid);
+    p->pr         = malloc(p->nelems * esz + 1);
+    if (complex_flag)
+        p->pi     = malloc(p->nelems * esz + 1);
+    return p;
+}
+
+/* ── mxCalcSingleSubscript ───────────────────────────────────────────────── */
+
+/* Converts an N-D subscript tuple to a linear 0-based index (column-major). */
+size_t mxCalcSingleSubscript(const mxArray pa, size_t nsubs, const size_t *subs) {
+    if (!pa || !subs || nsubs == 0) return 0;
+    size_t idx = 0, stride = 1;
+    for (size_t i = 0; i < nsubs && i < pa->ndim; i++) {
+        idx    += subs[i] * stride;
+        stride *= pa->dims[i];
+    }
+    return idx;
+}
+
 /* ── Cell accessors ──────────────────────────────────────────────────────── */
 
 mxArray mxGetCell(const mxArray pa, size_t index) {
@@ -642,3 +926,73 @@ int  mexAtExit(void (*fn)(void)) { (void)fn; return 0; }
 const char *mexFunctionName(void) { return "unmex_hosted_mex"; }
 void mexMakeArrayPersistent(mxArray pm) { (void)pm; }
 void mexMakeMemoryPersistent(void *ptr) { (void)ptr; }
+
+/* ── _730 large-array-API aliases ────────────────────────────────────────────
+ * MATLAB-compiled MEX on 64-bit platforms import symbol names with a _730 suffix
+ * (the "large-array API" introduced in MATLAB 7.3). Each alias is declared with the
+ * same prototype as its bare counterpart; __attribute__((alias)) makes the linker
+ * emit a second export pointing at the same code without duplicating it.
+ *
+ * GCC/Clang (the compilers used by the Unmex host build) support __attribute__((alias)).
+ * The declaration order must come AFTER the definitions above. */
+
+#define _MX_ALIAS(ret, name730, bare, params) \
+    ret name730 params __attribute__((alias(#bare)))
+
+/* Creation */
+_MX_ALIAS(mxArray, mxCreateNumericArray_730,        mxCreateNumericArray,
+          (size_t ndim, const size_t *dims, int classid, int complex_flag));
+_MX_ALIAS(mxArray, mxCreateNumericMatrix_730,       mxCreateNumericMatrix,
+          (size_t m, size_t n, int classid, int complex_flag));
+_MX_ALIAS(mxArray, mxCreateDoubleMatrix_730,        mxCreateDoubleMatrix,
+          (size_t m, size_t n, int complex_flag));
+_MX_ALIAS(mxArray, mxCreateLogicalArray_730,        mxCreateLogicalArray,
+          (size_t ndim, const size_t *dims));
+_MX_ALIAS(mxArray, mxCreateCellArray_730,           mxCreateCellArray,
+          (size_t ndim, const size_t *dims));
+_MX_ALIAS(mxArray, mxCreateCellMatrix_730,          mxCreateCellMatrix,
+          (size_t m, size_t n));
+_MX_ALIAS(mxArray, mxCreateStructArray_730,         mxCreateStructArray,
+          (size_t ndim, const size_t *dims, int nfields, const char **fieldnames));
+_MX_ALIAS(mxArray, mxCreateStructMatrix_730,        mxCreateStructMatrix,
+          (size_t m, size_t n, int nfields, const char **fieldnames));
+_MX_ALIAS(mxArray, mxCreateCharArray_730,           mxCreateCharArray,
+          (size_t ndim, const size_t *dims));
+_MX_ALIAS(mxArray, mxCreateSparse_730,              mxCreateSparse,
+          (size_t m, size_t n, size_t nzmax, int complex_flag));
+_MX_ALIAS(mxArray, mxCreateSparseLogicalMatrix_730, mxCreateSparseLogicalMatrix,
+          (size_t m, size_t n, size_t nzmax));
+
+/* Dimension accessors */
+_MX_ALIAS(const size_t *, mxGetDimensions_730,         mxGetDimensions,
+          (const mxArray pa));
+_MX_ALIAS(size_t,          mxGetNumberOfDimensions_730, mxGetNumberOfDimensions,
+          (const mxArray pa));
+_MX_ALIAS(int,             mxSetDimensions_730,         mxSetDimensions,
+          (mxArray pa, const size_t *dims, size_t ndim));
+
+/* Cell */
+_MX_ALIAS(mxArray, mxGetCell_730, mxGetCell,
+          (const mxArray pa, size_t index));
+_MX_ALIAS(void,    mxSetCell_730, mxSetCell,
+          (mxArray pa, size_t index, mxArray value));
+
+/* Struct */
+_MX_ALIAS(mxArray, mxGetField_730,           mxGetField,
+          (const mxArray pa, size_t index, const char *fieldname));
+_MX_ALIAS(void,    mxSetField_730,           mxSetField,
+          (mxArray pa, size_t index, const char *fieldname, mxArray value));
+_MX_ALIAS(mxArray, mxGetFieldByNumber_730,   mxGetFieldByNumber,
+          (const mxArray pa, size_t index, int fieldnum));
+_MX_ALIAS(void,    mxSetFieldByNumber_730,   mxSetFieldByNumber,
+          (mxArray pa, size_t index, int fieldnum, mxArray value));
+
+/* Sparse */
+_MX_ALIAS(size_t,  mxGetNzmax_730,  mxGetNzmax,
+          (const mxArray pa));
+_MX_ALIAS(void,    mxSetNzmax_730,  mxSetNzmax,
+          (mxArray pa, size_t nzmax));
+
+/* Single-subscript */
+_MX_ALIAS(size_t,  mxCalcSingleSubscript_730, mxCalcSingleSubscript,
+          (const mxArray pa, size_t nsubs, const size_t *subs));
