@@ -1,0 +1,12 @@
+# Built native artifacts (produced by deps/build.jl and the test C-MEX builds).
+*.so
+*.dylib
+*.dll
+*.o
+/Manifest.toml
+
+# Docs build output (the committed docs/package-lock.json is kept).
+docs/node_modules/
+docs/build/
+docs/.documenter/
+docs/Manifest.toml

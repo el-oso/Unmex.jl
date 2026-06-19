@@ -1,0 +1,18 @@
+name = "Unmex"
+uuid = "9e326b26-44e6-409b-ac2b-0791d6122c48"
+authors = ["el_oso"]
+version = "0.1.0"
+
+[deps]
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+TypeContracts = "c7a3f1e2-84b5-4d69-9e0a-1f2b3c4d5e6f"
+
+[compat]
+TypeContracts = "0.13.1, 0.14"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

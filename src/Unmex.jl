@@ -1,0 +1,164 @@
+"""
+    Unmex
+
+Call a MATLAB **MEX** file from Julia — the inverse of Mexicah (which compiles
+Julia → MEX). Unmex `dlopen`s a `.mex*`, builds `mxArray*` inputs from Julia
+values, invokes its `mexFunction`, and converts the `mxArray*` outputs back.
+
+No MATLAB required: Unmex ships its own host `libmx`/`libmex` (`runtime/libmxhost`)
+that provides the `mx*`/`mex*` symbols a MEX resolves at load time.
+
+MVP scope: "well-behaved" MEX that use only the C Matrix API plus
+`mexErrMsgIdAndTxt`/`mexPrintf`. MEX that call back into MATLAB (`mexCallMATLAB`,
+engine features) need a live interpreter and are not supported.
+
+```julia
+mex = Unmex.open_mex("double_it.mexa64")
+Unmex.call(mex, [1.0 2.0; 3.0 4.0])   # → [2.0 4.0; 6.0 8.0]
+```
+"""
+module Unmex
+
+using Libdl
+
+export open_mex, call, callmex
+
+const MxArray = Ptr{Cvoid}
+
+# mxClassID constants (subset; match the host / MATLAB enum).
+const mxDOUBLE_CLASS = Cint(6)
+const mxLOGICAL_CLASS = Cint(3)
+const mxCHAR_CLASS = Cint(4)
+
+# Per-class converters + the TypeContracts interface they satisfy. converters.jl
+# defines `to_mx`/`from_mx`/`mx_class_id`; contracts.jl registers the contract that
+# references them (so it is included after).
+include("converters.jl")
+include("contracts.jl")
+
+const _HOST = Ref{Ptr{Cvoid}}(C_NULL)
+
+_host_path() = joinpath(dirname(@__DIR__), "runtime", "libmxhost.$(Libdl.dlext)")
+
+function __init__()
+    path = _host_path()
+    if isfile(path)
+        # RTLD_GLOBAL so a subsequently-dlopen'd MEX binds its mx*/mex* symbols here.
+        _HOST[] = dlopen(path, RTLD_GLOBAL | RTLD_NOW)
+    else
+        # Don't hard-fail at load (keeps `using Unmex` usable for docs/inspection);
+        # MEX calls error clearly via `_ensure_host()` until the host is built.
+        @warn "Unmex: host libmx not built at $path; run `julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))`. MEX calls will fail until then."
+    end
+    return
+end
+
+function _ensure_host()
+    _HOST[] == C_NULL && error(
+        "Unmex: host libmx is not loaded. Build it with " *
+        "`julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))` and reload Unmex.",
+    )
+    return
+end
+
+# ── A loaded MEX ──────────────────────────────────────────────────────────────
+
+"""
+    MexFunction
+
+A handle to an opened MEX file: its path, the `dlopen` library handle, and the
+resolved `mexFunction` pointer. Create one with [`open_mex`](@ref) and invoke it
+with [`call`](@ref).
+"""
+struct MexFunction
+    path::String
+    lib::Ptr{Cvoid}
+    fn::Ptr{Cvoid}
+end
+
+Base.show(io::IO, m::MexFunction) = print(io, "MexFunction(", repr(basename(m.path)), ")")
+
+"""
+    open_mex(path) -> MexFunction
+
+`dlopen` a MEX file and resolve its `mexFunction` entry point.
+"""
+function open_mex(path::AbstractString)::MexFunction
+    _ensure_host()
+    isfile(path) || error("Unmex: no such MEX file: $path")
+    lib = dlopen(path, RTLD_NOW)
+    fn = dlsym(lib, :mexFunction)
+    return MexFunction(String(path), lib, fn)
+end
+
+# ── Julia ↔ mxArray (delegates to the per-class converters in converters.jl) ──
+
+"""    julia_to_mx(x) -> mxArray
+
+Marshal a Julia value into a freshly allocated `mxArray` (input side / `prhs`).
+"""
+julia_to_mx(x)::MxArray = to_mx(converter_for(x), x)
+
+"""    mx_to_julia(pa) -> value
+
+Convert a returned `mxArray*` to a Julia value, dispatching on its `mxClassID`.
+"""
+function mx_to_julia(pa::MxArray)
+    pa == C_NULL && return nothing
+    cid = ccall(:mxGetClassID, Cint, (MxArray,), pa)
+    return from_mx(converter_for_class(cid), pa)
+end
+
+# ── call ──────────────────────────────────────────────────────────────────────
+
+"""
+    call(mex, args...; nargout=1)
+
+Invoke `mex` with Julia `args` (marshaled to `mxArray`s) and convert the outputs
+back. `nargout=1` returns the single output (or `nothing`); `nargout>1` returns a
+tuple. A `mexErrMsgIdAndTxt` raised by the MEX becomes a Julia `ErrorException`.
+"""
+function call(mex::MexFunction, args...; nargout::Integer = 1)
+    nrhs = length(args)
+    nlhs = max(Int(nargout), 0)
+    prhs = MxArray[julia_to_mx(a) for a in args]
+    plhs = fill(MxArray(C_NULL), max(nlhs, 1))
+    errid = Vector{UInt8}(undef, 256)
+    errmsg = Vector{UInt8}(undef, 1024)
+
+    rc = GC.@preserve prhs plhs errid errmsg ccall(
+        :unmex_call, Cint,
+        (Ptr{Cvoid}, Cint, Ptr{MxArray}, Cint, Ptr{MxArray}, Ptr{UInt8}, Csize_t, Ptr{UInt8}, Csize_t),
+        mex.fn, nlhs, plhs, nrhs, prhs, errid, length(errid), errmsg, length(errmsg),
+    )
+
+    if rc != 0
+        id = unsafe_string(pointer(errid))
+        msg = unsafe_string(pointer(errmsg))
+        _destroy_all(prhs)
+        error("MEX raised [$id]: $msg")
+    end
+
+    outs = Any[mx_to_julia(plhs[i]) for i in 1:nlhs]
+    _destroy_all(prhs)
+    _destroy_all(@view plhs[1:nlhs])
+
+    return nargout <= 1 ? (isempty(outs) ? nothing : outs[1]) : Tuple(outs)
+end
+
+"""
+    callmex(path, args...; nargout=1)
+
+One-shot: `open_mex(path)` then `call(...)`.
+"""
+callmex(path::AbstractString, args...; nargout::Integer = 1) =
+    call(open_mex(path), args...; nargout = nargout)
+
+function _destroy_all(ptrs)
+    for p in ptrs
+        p != C_NULL && ccall(:mxDestroyArray, Cvoid, (MxArray,), p)
+    end
+    return
+end
+
+end # module Unmex
