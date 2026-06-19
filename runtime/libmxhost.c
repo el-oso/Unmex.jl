@@ -515,11 +515,26 @@ void mxSetCell(mxArray pa, size_t index, mxArray value) {
  * wrapping the same `cells` (char arrays) as a cell-of-char; both directions copy
  * shape and deep-copy the elements (source is not mutated). Any other function
  * name returns nonzero (mimicking a MATLAB error). */
+/* mexErrMsgIdAndTxt is defined below (it longjmps to the unmex_call shim); forward-
+ * declare it so mexCallMATLAB and the interpreter stubs can raise through it. */
+void mexErrMsgIdAndTxt(const char *id, const char *fmt, ...);
+static void unmex_need_matlab(const char *fn) {
+    mexErrMsgIdAndTxt("Unmex:noInterpreter",
+        "%s needs a live MATLAB interpreter, which the Unmex host does not provide.", fn);
+}
+
 int mexCallMATLAB(int nlhs, mxArray plhs[], int nrhs, mxArray prhs[], const char *fn) {
     if (nlhs < 1 || nrhs < 1 || !prhs[0] || !fn) return 1;
     int to_string = strcmp(fn, "string") == 0;
     int to_cell   = strcmp(fn, "cellstr") == 0;
-    if (!to_string && !to_cell) return 1;
+    if (!to_string && !to_cell) {
+        /* Raise (→ catchable Julia exception) instead of returning 1, so a MEX that
+         * ignores the error code and dereferences plhs can't segfault the process. */
+        mexErrMsgIdAndTxt("Unmex:mexCallMATLAB:noInterpreter",
+            "mexCallMATLAB(\"%s\") needs a live MATLAB interpreter; the Unmex host only "
+            "emulates \"string\" and \"cellstr\".", fn);
+        return 1; /* unreachable: mexErrMsgIdAndTxt longjmps */
+    }
     mx_stub_t *src = prhs[0];
     mx_stub_t *p = alloc_stub();
     p->classid = to_string ? MX_STRING_CLASS : MX_CELL_CLASS;
@@ -592,3 +607,38 @@ int mexPrintf(const char *fmt, ...) {
     va_end(ap);
     return r;
 }
+
+/* ── Interpreter-only entries ──────────────────────────────────────────────────
+ * Present so a MEX that *references* them links and loads (dlopen with RTLD_NOW
+ * resolves every symbol eagerly), but each raises a clear, catchable error via the
+ * setjmp shim when actually called — instead of a cryptic "undefined symbol" at
+ * load or a crash. The Unmex host can never fabricate these without a live MATLAB. */
+int      mexEvalString(const char *cmd) { (void)cmd; unmex_need_matlab("mexEvalString"); return 1; }
+mxArray  mexEvalStringWithTrap(const char *cmd) { (void)cmd; unmex_need_matlab("mexEvalStringWithTrap"); return NULL; }
+mxArray  mexGetVariable(const char *ws, const char *name) { (void)ws; (void)name; unmex_need_matlab("mexGetVariable"); return NULL; }
+mxArray  mexGetVariablePtr(const char *ws, const char *name) { (void)ws; (void)name; unmex_need_matlab("mexGetVariablePtr"); return NULL; }
+int      mexPutVariable(const char *ws, const char *name, const mxArray pm) { (void)ws; (void)name; (void)pm; unmex_need_matlab("mexPutVariable"); return 1; }
+mxArray  mexCallMATLABWithTrap(int nlhs, mxArray plhs[], int nrhs, mxArray prhs[], const char *fn) {
+    (void)nlhs; (void)plhs; (void)nrhs; (void)prhs; (void)fn; unmex_need_matlab("mexCallMATLABWithTrap"); return NULL;
+}
+mxArray  mexGet(double h, const char *prop) { (void)h; (void)prop; unmex_need_matlab("mexGet"); return NULL; }
+int      mexSet(double h, const char *prop, mxArray v) { (void)h; (void)prop; (void)v; unmex_need_matlab("mexSet"); return 1; }
+
+/* ── Benign entries (no interpreter needed) ───────────────────────────────────
+ * Implemented so common MEX link and behave sanely. There is no cross-call
+ * persistence or locking in the host, but these never crash. */
+void mexWarnMsgIdAndTxt(const char *id, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "[mex warning %s] ", id ? id : "");
+    vfprintf(stderr, fmt ? fmt : "", ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+}
+void mexWarnMsgTxt(const char *msg) { fprintf(stderr, "[mex warning] %s\n", msg ? msg : ""); }
+void mexLock(void) {}
+void mexUnlock(void) {}
+int  mexIsLocked(void) { return 0; }
+int  mexAtExit(void (*fn)(void)) { (void)fn; return 0; }
+const char *mexFunctionName(void) { return "unmex_hosted_mex"; }
+void mexMakeArrayPersistent(mxArray pm) { (void)pm; }
+void mexMakeMemoryPersistent(void *ptr) { (void)ptr; }

@@ -122,3 +122,33 @@ end
         @test callmex(DOUBLE_IT, 5.0) == 10.0
     end
 end
+
+@testset "graceful failure on interpreter-only MEX (no crash)" begin
+    # These reference interpreter-only symbols. Thanks to the host stubs they LOAD
+    # (dlopen resolves the symbols), and raise a catchable Julia error when run —
+    # instead of an undefined-symbol load failure or a process crash.
+    @testset "mexEvalString → ErrorException" begin
+        mex = open_mex(build_cmex("needs_eval"))
+        e = try
+            call(mex)
+            nothing
+        catch e
+            e
+        end
+        @test e isa ErrorException
+        @test occursin("mexEvalString", e.msg)
+        @test occursin("live MATLAB", e.msg)
+    end
+    @testset "mexCallMATLAB(unsupported) → ErrorException" begin
+        mex = open_mex(build_cmex("needs_callmatlab"))
+        e = try
+            call(mex)
+            nothing
+        catch e
+            e
+        end
+        @test e isa ErrorException
+        @test occursin("mexCallMATLAB", e.msg)
+        @test occursin("sort", e.msg)
+    end
+end

@@ -60,3 +60,24 @@ Matrix API (grown from Mexicah's libmx test stub). Because an `mxArray` is opaqu
 the MEX — it only ever calls accessor functions — the host controls the struct
 layout internally and a faithful set of `mx*` accessors is enough to serve a
 well-behaved MEX.
+
+## Interpreter-only MEX
+
+Some MEX call back into the MATLAB interpreter (`mexCallMATLAB` for a real builtin,
+`mexEvalString`, `mexGetVariable`, …). The host can't fabricate those without a live
+MATLAB, but it fails **gracefully** rather than crashing:
+
+- The interpreter symbols are present in the host (so `dlopen` with `RTLD_NOW`
+  resolves them and the MEX loads), but each **raises a catchable Julia
+  `ErrorException`** when actually called — e.g. `mexEvalString needs a live MATLAB
+  interpreter`.
+- The host's `mexCallMATLAB` **raises** for any builtin other than the emulated
+  `"string"`/`"cellstr"` (instead of returning an error code), so a MEX that ignores
+  the return value and dereferences the output can't segfault the process.
+- A MEX that *returns* a function handle / classdef object / opaque type fails with a
+  clear "unsupported output class" error.
+
+The one remaining hard-crash path is a MEX that calls `mexCallMATLAB` and then derefs
+its (untouched) output **without** the call unwinding first — which the host's raise
+now prevents in the common case. A MEX that references an `mx*` accessor the host
+doesn't implement yet fails cleanly at `open_mex` with an undefined-symbol error.
