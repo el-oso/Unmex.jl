@@ -8,9 +8,11 @@ values, invokes its `mexFunction`, and converts the `mxArray*` outputs back.
 No MATLAB required: Unmex ships its own host `libmx`/`libmex` (`runtime/libmxhost`)
 that provides the `mx*`/`mex*` symbols a MEX resolves at load time.
 
-MVP scope: "well-behaved" MEX that use only the C Matrix API plus
-`mexErrMsgIdAndTxt`/`mexPrintf`. MEX that call back into MATLAB (`mexCallMATLAB`,
-engine features) need a live interpreter and are not supported.
+Scope: MEX that use the C Matrix API (the full self-contained MATLAB type set —
+numeric, complex, logical, char/string, sparse, struct, cell — round-trips). MEX
+that call back into MATLAB (`mexCallMATLAB` for a real builtin, `mexEvalString`, …)
+need a live interpreter; the host can't fabricate those, but it fails **gracefully**
+— they raise a catchable Julia error instead of crashing.
 
 ```julia
 mex = Unmex.open_mex("double_it.mexa64")
@@ -41,9 +43,9 @@ export open_mex, call, callmex
 # legacy enum (which stops at mxOBJECT_CLASS = 18).
 const mxSTRING_CLASS = Cint(19)
 
-# Per-class converters + the TypeContracts interface they satisfy. converters.jl
-# defines `to_mx`/`from_mx`/`mx_class_id`; contracts.jl registers the contract that
-# references them (so it is included after).
+# Output converters + the TypeContracts interface they satisfy. converters.jl defines
+# `from_mx` and the per-class converter types; contracts.jl registers the contract
+# that references them (so it is included after).
 include("converters.jl")
 include("contracts.jl")
 
@@ -67,7 +69,7 @@ end
 function _ensure_host()
     _HOST[] == C_NULL && error(
         "Unmex: host libmx is not loaded. Build it with " *
-        "`julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))` and reload Unmex.",
+            "`julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))` and reload Unmex.",
     )
     return
 end
