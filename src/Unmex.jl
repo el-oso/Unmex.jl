@@ -21,14 +21,25 @@ module Unmex
 
 using Libdl
 
-# Share the mxArray FFI core with LibMx (the same code Mexicah uses). Selective
-# import (not a broad `using LibMx`) so Unmex's own `mx_class_id`/`to_mx`/`from_mx`
-# converter methods don't collide with LibMx's marshaler API of the same names.
-using LibMx: MxArray, mxDOUBLE_CLASS,
-    mx_create_double_matrix, mx_create_double_scalar, mx_get_pr,
-    mx_get_m, mx_get_n, mx_is_complex, mx_get_class_id, mx_destroy_array
+# Share the mxArray FFI + marshaling core with LibMx (the same code Mexicah uses).
+# Inputs reuse LibMx's `store_result`/`marshaler_for`; outputs reuse its `load` +
+# marshaler types, dispatched on the runtime class-id (see converters.jl).
+using LibMx: MxArray, store_result, load,
+    DenseArrayMarshaler, ComplexArrayMarshaler, ComplexF32ArrayMarshaler,
+    LogicalArrayMarshaler, SparseFloat64Marshaler, SparseComplexF64Marshaler,
+    SparseLogicalMarshaler, CharMatrixMarshaler, StringMarshaler, StringArrayMarshaler,
+    mxDOUBLE_CLASS, mxSINGLE_CLASS, mxLOGICAL_CLASS, mxCHAR_CLASS, mxCELL_CLASS,
+    mxSTRUCT_CLASS, mxINT8_CLASS, mxUINT8_CLASS, mxINT16_CLASS, mxUINT16_CLASS,
+    mxINT32_CLASS, mxUINT32_CLASS, mxINT64_CLASS, mxUINT64_CLASS,
+    mx_get_class_id, mx_is_complex, mx_is_sparse, mx_get_m, mx_get_n,
+    mx_get_number_of_elements, mx_get_number_of_dimensions, mx_get_cell,
+    mx_get_field, mx_get_field_name_by_number, mx_get_number_of_fields, mx_destroy_array
 
 export open_mex, call, callmex
+
+# The host models R2016b `string` arrays as this class (libmxhost.c); not in LibMx's
+# legacy enum (which stops at mxOBJECT_CLASS = 18).
+const mxSTRING_CLASS = Cint(19)
 
 # Per-class converters + the TypeContracts interface they satisfy. converters.jl
 # defines `to_mx`/`from_mx`/`mx_class_id`; contracts.jl registers the contract that
@@ -95,19 +106,24 @@ end
 
 """    julia_to_mx(x) -> mxArray
 
-Marshal a Julia value into a freshly allocated `mxArray` (input side / `prhs`).
+Marshal a Julia value into a freshly allocated `mxArray` (input side / `prhs`),
+reusing LibMx's full marshaler set via `store_result` — so every Julia type LibMx
+supports (numeric, complex, logical, char/string, sparse, struct, cell, …) works.
 """
-julia_to_mx(x)::MxArray = to_mx(converter_for(x), x)
+function julia_to_mx(x)::MxArray
+    buf = MxArray[C_NULL]
+    GC.@preserve buf store_result(pointer(buf), 1, x)
+    return buf[1]
+end
 
 """    mx_to_julia(pa) -> value
 
-Convert a returned `mxArray*` to a Julia value, dispatching on its `mxClassID`.
+Convert a returned `mxArray*` to a Julia value, dispatching on its runtime
+`mxClassID` (+ complex/sparse flags) to the matching LibMx marshaler; cells and
+structs are converted recursively. See `converters.jl`.
 """
-function mx_to_julia(pa::MxArray)
-    pa == C_NULL && return nothing
-    cid = mx_get_class_id(pa)
-    return from_mx(converter_for_class(cid), pa)
-end
+mx_to_julia(pa::MxArray) =
+    pa == C_NULL ? nothing : from_mx(_output_converter(pa), pa)
 
 # ── call ──────────────────────────────────────────────────────────────────────
 

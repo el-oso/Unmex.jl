@@ -17,14 +17,75 @@ const DOUBLE_IT = build_cmex("double_it")
 
 using Unmex
 using TypeContracts
+using SparseArrays
 
 @testset "AbstractMxConverter contract (TypeContracts)" begin
     I = Unmex.AbstractMxConverter
-    @test TypeContracts.check_contract(Unmex.DoubleConverter, I).passed
-    @test TypeContracts.interface_trait(I, Unmex.DoubleConverter) isa TypeContracts.Implemented{I}
+    converters = [
+        Unmex.NumericConverter, Unmex.ComplexConverter, Unmex.LogicalConverter,
+        Unmex.CharConverter, Unmex.SparseConverter, Unmex.StringArrayConverter,
+        Unmex.CellConverter, Unmex.StructConverter,
+    ]
+    for C in converters
+        @test TypeContracts.check_contract(C, I).passed
+        @test TypeContracts.interface_trait(I, C) isa TypeContracts.Implemented{I}
+    end
     # A type missing the methods must NOT satisfy the contract.
     struct NotAConverter end
     @test TypeContracts.interface_trait(I, NotAConverter) isa TypeContracts.NotImplemented{I}
+end
+
+@testset "type round-trip: julia_to_mx → mx_to_julia (no MATLAB)" begin
+    # Build an mxArray from a Julia value, read it back, free it.
+    function rt(x)
+        pa = Unmex.julia_to_mx(x)
+        y = Unmex.mx_to_julia(pa)
+        Unmex.mx_destroy_array(pa)
+        return y
+    end
+
+    @testset "integer tower (scalars + matrix)" begin
+        for T in (Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64)
+            @test rt(T(7)) === T(7)
+        end
+        @test rt(Int32[1 2; 3 4]) == Int32[1 2; 3 4]
+    end
+    @testset "floats" begin
+        @test rt(2.5) === 2.5
+        @test rt(2.5f0) === 2.5f0
+        @test rt(Float32[1 2; 3 4]) == Float32[1 2; 3 4]
+        @test rt([1.0 2.0; 3.0 4.0]) == [1.0 2.0; 3.0 4.0]
+    end
+    @testset "complex (double + single)" begin
+        @test rt([1.0+2im 3.0-4im]) == [1.0+2im 3.0-4im]
+        @test rt(ComplexF32[1+2im 3-4im]) == ComplexF32[1+2im 3-4im]
+    end
+    @testset "logical" begin
+        @test rt(true) === true
+        @test rt([true false; false true]) == [true false; false true]
+    end
+    @testset "char / string" begin
+        @test rt("hello") == "hello"
+        @test rt(['a' 'b'; 'c' 'd']) == ['a' 'b'; 'c' 'd']
+    end
+    @testset "string array (Matrix{String})" begin
+        @test rt(["a" "b"; "c" "d"]) == ["a" "b"; "c" "d"]
+    end
+    @testset "sparse (double + logical)" begin
+        @test rt(sparse([1.0 0.0; 0.0 2.0])) == sparse([1.0 0.0; 0.0 2.0])
+        @test rt(sparse([true false; false true])) == sparse([true false; false true])
+    end
+    @testset "struct (NamedTuple, incl. array field)" begin
+        @test rt((a = 1.0, b = 2.0)) == (a = 1.0, b = 2.0)
+        y = rt((x = 3.0, v = [1.0, 2.0]))
+        @test y.x == 3.0 && y.v == reshape([1.0, 2.0], 2, 1)
+    end
+    @testset "cell (Tuple → Array{Any})" begin
+        # Numeric/array cell elements round-trip. (Strings *inside* a cell/struct are
+        # a LibMx limitation — StringMarshaler.store! is a no-op — see converters.jl.)
+        y = rt((1.0, Int32(7), [2.0 3.0]))
+        @test y[1] == 1.0 && y[2] === Int32(7) && y[3] == [2.0 3.0]
+    end
 end
 
 @testset "Unmex MVP — call a C MEX from Julia (no MATLAB)" begin
@@ -41,9 +102,6 @@ end
         # A Julia Vector marshals to a MATLAB N×1 column, so it returns as an N×1
         # Matrix — faithful to MATLAB semantics. `vec(...)` if you want it flat.
         @test call(mex, [1.0, 2.0, 3.0]) == reshape([2.0, 4.0, 6.0], 3, 1)
-    end
-    @testset "integer input is promoted to double" begin
-        @test call(mex, [1 2; 3 4]) == [2.0 4.0; 6.0 8.0]
     end
     @testset "MEX error → Julia exception (not a process abort)" begin
         # double_it raises mexErrMsgIdAndTxt unless nrhs==1.
