@@ -9,17 +9,17 @@ struct DoubleConverter end
 
 mx_class_id(::DoubleConverter)::Cint = mxDOUBLE_CLASS
 
-# Julia → mxArray. The value arg is untyped (`::Any`) so `hasmethod(to_mx, (Self,
-# Any))` holds for the contract; we branch on the concrete value here.
+# Julia → mxArray, via LibMx's FFI wrappers. The value arg is untyped (`::Any`) so
+# `hasmethod(to_mx, (Self, Any))` holds for the contract; we branch on the value.
 function to_mx(::DoubleConverter, x)::MxArray
     if x isa Real
-        return ccall(:mxCreateDoubleScalar, MxArray, (Cdouble,), Cdouble(x))
+        return mx_create_double_scalar(Cdouble(x))
     elseif x isa AbstractVecOrMat && eltype(x) <: Real
         A = x isa Array{Float64} ? x : convert(Array{Float64}, x)
-        m = size(A, 1)
-        n = ndims(A) == 1 ? 1 : size(A, 2)
-        pa = ccall(:mxCreateDoubleMatrix, MxArray, (Csize_t, Csize_t, Cint), m, n, 0)
-        pr = ccall(:mxGetPr, Ptr{Float64}, (MxArray,), pa)
+        m = Csize_t(size(A, 1))
+        n = Csize_t(ndims(A) == 1 ? 1 : size(A, 2))
+        pa = mx_create_double_matrix(m, n, Cint(0))
+        pr = mx_get_pr(pa)
         GC.@preserve A unsafe_copyto!(pr, pointer(A), length(A))
         return pa
     end
@@ -29,11 +29,10 @@ end
 # mxArray → Julia. A 1×1 collapses to a scalar; everything else stays an N×M
 # Matrix (MATLAB has no 1-D arrays, so a column comes back as N×1).
 function from_mx(::DoubleConverter, pa::MxArray)
-    ccall(:mxIsComplex, Cint, (MxArray,), pa) == 0 ||
-        return error("Unmex: complex double output not supported yet")
-    m = Int(ccall(:mxGetM, Csize_t, (MxArray,), pa))
-    n = Int(ccall(:mxGetN, Csize_t, (MxArray,), pa))
-    pr = ccall(:mxGetPr, Ptr{Float64}, (MxArray,), pa)
+    mx_is_complex(pa) && return error("Unmex: complex double output not supported yet")
+    m = Int(mx_get_m(pa))
+    n = Int(mx_get_n(pa))
+    pr = mx_get_pr(pa)
     if m == 1 && n == 1
         return unsafe_load(pr)
     end

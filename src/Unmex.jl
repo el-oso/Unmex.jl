@@ -21,14 +21,14 @@ module Unmex
 
 using Libdl
 
+# Share the mxArray FFI core with LibMx (the same code Mexicah uses). Selective
+# import (not a broad `using LibMx`) so Unmex's own `mx_class_id`/`to_mx`/`from_mx`
+# converter methods don't collide with LibMx's marshaler API of the same names.
+using LibMx: MxArray, mxDOUBLE_CLASS,
+    mx_create_double_matrix, mx_create_double_scalar, mx_get_pr,
+    mx_get_m, mx_get_n, mx_is_complex, mx_get_class_id, mx_destroy_array
+
 export open_mex, call, callmex
-
-const MxArray = Ptr{Cvoid}
-
-# mxClassID constants (subset; match the host / MATLAB enum).
-const mxDOUBLE_CLASS = Cint(6)
-const mxLOGICAL_CLASS = Cint(3)
-const mxCHAR_CLASS = Cint(4)
 
 # Per-class converters + the TypeContracts interface they satisfy. converters.jl
 # defines `to_mx`/`from_mx`/`mx_class_id`; contracts.jl registers the contract that
@@ -105,7 +105,7 @@ Convert a returned `mxArray*` to a Julia value, dispatching on its `mxClassID`.
 """
 function mx_to_julia(pa::MxArray)
     pa == C_NULL && return nothing
-    cid = ccall(:mxGetClassID, Cint, (MxArray,), pa)
+    cid = mx_get_class_id(pa)
     return from_mx(converter_for_class(cid), pa)
 end
 
@@ -156,7 +156,7 @@ callmex(path::AbstractString, args...; nargout::Integer = 1) =
 
 function _destroy_all(ptrs)
     for p in ptrs
-        p != C_NULL && ccall(:mxDestroyArray, Cvoid, (MxArray,), p)
+        p != C_NULL && mx_destroy_array(p)
     end
     return
 end
