@@ -60,8 +60,35 @@ libmx Matrix API. It is **owned by LibMx** — one canonical source shared with 
 tests — and `deps/build.jl` compiles it into `runtime/`. Because an `mxArray` is opaque
 to the MEX — it only ever calls accessor functions — the host controls the struct layout
 internally, and a faithful set of `mx*`/`mex*` functions (memory, introspection, field
-and data accessors/mutators, strings) plus the `_730` large-array aliases that
+and data accessors/mutators, strings) plus the versioned aliases (below) that
 MATLAB-compiled MEX link against is enough to serve a well-behaved MEX.
+
+## Loading a real MATLAB-compiled MEX
+
+Two things differ between a hand-compiled C MEX and a genuine MATLAB `.mexa64`:
+
+1. **Versioned symbols.** MATLAB versions its C API per release — a function is imported
+   as `mxGetPr_800` (recent releases), `mxGetPr_730`, or `mxGetPr_700`, not bare `mxGetPr`.
+   The host aliases **every** public function to all three suffixes, so `dlopen` with
+   `RTLD_NOW` resolves them.
+2. **`DT_NEEDED`.** A real MEX records a dependency on `libmx.so`/`libmex.so`, so the loader
+   wants *files* by those names. The host is built under those **sonames**
+   (`LibMx.build_libmxhost(...; soname="libmx.so")`) and `__init__` `dlopen`s both
+   `RTLD_GLOBAL` — so a MEX's `DT_NEEDED` is satisfied by the already-loaded host, with no
+   `LD_LIBRARY_PATH`.
+
+A MEX that depends only on `libmx`/`libmex` (plus standard system libraries) therefore
+**loads and runs**. Verified end to end against a real MATLAB install: a point-in-polygon
+`.mexa64` — `(points N×2, vertices M×2) -> logical N×1` — called from Julia with no MATLAB
+returns results identical to an independent Julia implementation. A MEX that also needs
+MATLAB's internal libraries (`libmwfl`, `libmwm_interpreter`, …) fails cleanly at
+`open_mex` with an undefined-library/symbol error.
+
+!!! warning "Calling an unknown MEX is unsafe"
+    A MEX trusts its inputs — calling one with the wrong arity/types can dereference a
+    missing `prhs[i]` and **segfault** (the `setjmp` shim catches a `longjmp`, not a
+    signal). For an unfamiliar binary, read its docs/source for the signature, or use
+    [`probe`](@ref Unmex.probe) with `call=false` (scans without invoking it).
 
 ## Interpreter-only MEX
 
