@@ -22,6 +22,7 @@ Unmex.call(mex, [1.0 2.0; 3.0 4.0])   # → [2.0 4.0; 6.0 8.0]
 module Unmex
 
 using Libdl
+import LinearAlgebra  # loads libblastrampoline (LBT); the BLAS bridge forwards to it
 
 # Share the mxArray FFI + marshaling core with LibMx (the same code Mexicah uses).
 # Inputs reuse LibMx's `store_result`/`marshaler_for`; outputs reuse its `load` +

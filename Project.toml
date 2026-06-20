@@ -6,6 +6,7 @@ version = "0.1.0"
 [deps]
 LibMx = "2f4a764b-710e-4b99-a834-8162471695bc"
 Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 TypeContracts = "c7a3f1e2-84b5-4d69-9e0a-1f2b3c4d5e6f"
 
 [sources]
