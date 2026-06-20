@@ -23,6 +23,7 @@ module Unmex
 
 using Libdl
 import LinearAlgebra  # loads libblastrampoline (LBT); the BLAS bridge forwards to it
+import LibMx          # module name, for LibMx.* in the zero-copy fast path
 
 # Share the mxArray FFI + marshaling core with LibMx (the same code Mexicah uses).
 # Inputs reuse LibMx's `store_result`/`marshaler_for`; outputs reuse its `load` +
@@ -49,6 +50,7 @@ const mxSTRING_CLASS = Cint(19)
 # that references them (so it is included after).
 include("converters.jl")
 include("contracts.jl")
+include("zerocopy.jl")  # opt-in zero-copy input fast path (call(...; copy=false))
 
 const _HOST = Ptr{Cvoid}[]
 
@@ -158,21 +160,39 @@ mx_to_julia(pa::MxArray) =
 # ── call ──────────────────────────────────────────────────────────────────────
 
 """
-    call(mex, args...; nargout=1)
+    call(mex, args...; nargout=1, copy=true)
 
 Invoke `mex` with Julia `args` (marshaled to `mxArray`s) and convert the outputs
 back. `nargout=1` returns the single output (or `nothing`); `nargout>1` returns a
 tuple. A `mexErrMsgIdAndTxt` raised by the MEX becomes a Julia `ErrorException`.
+
+`copy=true` (default) copies each argument into a fresh `mxArray` — the safe model: the
+MEX gets its own buffer and cannot touch the caller's memory. **`copy=false`** is an opt-in
+fast path that, for dense real numeric `Array` arguments, points the input `mxArray`
+straight at Julia's buffer (no allocation, no copy). Only use it for a MEX you **trust**:
+a MEX that writes to an input, destroys it, or stashes its pointer can corrupt or crash the
+process. Outputs are always copied. See `src/zerocopy.jl`.
 """
-function call(mex::MexFunction, args...; nargout::Integer = 1)
+function call(mex::MexFunction, args...; nargout::Integer = 1, copy::Bool = true)
     nrhs = length(args)
     nlhs = max(Int(nargout), 0)
-    prhs = MxArray[julia_to_mx(a) for a in args]
+    prhs = Vector{MxArray}(undef, nrhs)
+    borrowed = copy ? nothing : falses(nrhs)
+    for i in 1:nrhs
+        a = args[i]
+        if !copy && _zerocopy_eligible(a)
+            prhs[i] = _borrow_mx(a)
+            borrowed[i] = true
+        else
+            prhs[i] = julia_to_mx(a)
+        end
+    end
     plhs = fill(MxArray(C_NULL), max(nlhs, 1))
     errid = Vector{UInt8}(undef, 256)
     errmsg = Vector{UInt8}(undef, 1024)
 
-    rc = GC.@preserve prhs plhs errid errmsg ccall(
+    # GC.@preserve args: borrowed input mxArrays point at the args' buffers for the call.
+    rc = GC.@preserve args prhs plhs errid errmsg ccall(
         :unmex_call, Cint,
         (Ptr{Cvoid}, Cint, Ptr{MxArray}, Cint, Ptr{MxArray}, Ptr{UInt8}, Csize_t, Ptr{UInt8}, Csize_t),
         mex.fn, nlhs, plhs, nrhs, prhs, errid, length(errid), errmsg, length(errmsg),
@@ -181,12 +201,12 @@ function call(mex::MexFunction, args...; nargout::Integer = 1)
     if rc != 0
         id = unsafe_string(pointer(errid))
         msg = unsafe_string(pointer(errmsg))
-        _destroy_all(prhs)
+        _destroy_inputs(prhs, borrowed)
         error("MEX raised [$id]: $msg")
     end
 
     outs = Any[mx_to_julia(plhs[i]) for i in 1:nlhs]
-    _destroy_all(prhs)
+    _destroy_inputs(prhs, borrowed)
     _destroy_all(@view plhs[1:nlhs])
 
     return nargout <= 1 ? (isempty(outs) ? nothing : outs[1]) : Tuple(outs)
@@ -197,8 +217,8 @@ end
 
 One-shot: `open_mex(path)` then `call(...)`.
 """
-callmex(path::AbstractString, args...; nargout::Integer = 1) =
-    call(open_mex(path), args...; nargout = nargout)
+callmex(path::AbstractString, args...; nargout::Integer = 1, copy::Bool = true) =
+    call(open_mex(path), args...; nargout = nargout, copy = copy)
 
 function _destroy_all(ptrs)
     for p in ptrs
