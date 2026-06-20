@@ -54,7 +54,7 @@ function _scan_contract_strings(path::AbstractString; minlen::Int = 4, limit::In
 end
 
 """
-    probe([io=stdout], mex; max_nargs=3, sample=[1.0 2.0; 3.0 4.0], types=true, scan=true)
+    probe([io=stdout], mex; max_nargs=3, sample=[1.0 2.0; 3.0 4.0], types=true, scan=true, call=true)
 
 Best-effort discovery of how to call an opaque MEX. `mex` may be a [`MexFunction`](@ref) or
 a path. Prints a report with three parts:
@@ -65,7 +65,9 @@ a path. Prints a report with three parts:
   * **strings** — `mexErrMsgIdAndTxt`-style texts found in the binary (often the contract).
 
 A MEX carries no signature metadata and may be polymorphic, so this is discovery, not a
-complete specification. Probing *invokes the MEX*; see the note in `src/probe.jl`.
+complete specification. The arity/type sweeps *invoke the MEX* — pass `call=false` to skip
+them and only scan the binary (safe for a MEX you can't or won't execute, e.g. one that
+embeds its own runtime, or an untrusted binary). See the note in `src/probe.jl`.
 """
 function probe(
         io::IO,
@@ -74,32 +76,37 @@ function probe(
         sample = [1.0 2.0; 3.0 4.0],
         types::Bool = true,
         scan::Bool = true,
+        call::Bool = true,
     )
     println(io, "Probing ", repr(basename(mex.path)), "  (entry point: mexFunction)")
 
-    println(io, "\nArity sweep (", summary(sample), " per argument):")
-    okarity = Int[]
-    for n in 0:Int(max_nargs)
-        args = ntuple(_ -> sample, n)
-        try
-            r = call(mex, args...)
-            push!(okarity, n)
-            println(io, "  nargs=$n → OK, returns ", _describe(r))
-        catch e
-            println(io, "  nargs=$n → ", _oneline(e))
-        end
-    end
-
-    if types && !isempty(okarity)
-        n = first(okarity)
-        println(io, "\nType probe at nargs=$n:")
-        for v in Any[1.0, Int32[1 2 3], "hello", [true false true]]
-            args = ntuple(_ -> v, n)
+    if !call
+        println(io, "\n(call=false: not invoking the MEX — scan only)")
+    else
+        println(io, "\nArity sweep (", summary(sample), " per argument):")
+        okarity = Int[]
+        for n in 0:Int(max_nargs)
+            args = ntuple(_ -> sample, n)
             try
-                r = call(mex, args...)
-                println(io, "  ", rpad(_describe(v), 24), " → OK, returns ", _describe(r))
+                r = Unmex.call(mex, args...)
+                push!(okarity, n)
+                println(io, "  nargs=$n → OK, returns ", _describe(r))
             catch e
-                println(io, "  ", rpad(_describe(v), 24), " → ", _oneline(e))
+                println(io, "  nargs=$n → ", _oneline(e))
+            end
+        end
+
+        if types && !isempty(okarity)
+            n = first(okarity)
+            println(io, "\nType probe at nargs=$n:")
+            for v in Any[1.0, Int32[1 2 3], "hello", [true false true]]
+                args = ntuple(_ -> v, n)
+                try
+                    r = Unmex.call(mex, args...)
+                    println(io, "  ", rpad(_describe(v), 24), " → OK, returns ", _describe(r))
+                catch e
+                    println(io, "  ", rpad(_describe(v), 24), " → ", _oneline(e))
+                end
             end
         end
     end

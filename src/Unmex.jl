@@ -99,9 +99,12 @@ Base.show(io::IO, m::MexFunction) = print(io, "MexFunction(", repr(basename(m.pa
 function open_mex(path::AbstractString)::MexFunction
     _ensure_host()
     isfile(path) || error("Unmex: no such MEX file: $path")
+    # `dlopen` treats a name with no directory separator as a soname to search for on the
+    # library path, not a file in the CWD — so always hand it the absolute path.
+    path = abspath(path)
     lib = dlopen(path, RTLD_NOW)
     fn = dlsym(lib, :mexFunction)
-    return MexFunction(String(path), lib, fn)
+    return MexFunction(path, lib, fn)
 end
 
 # ── Julia ↔ mxArray (delegates to the per-class converters in converters.jl) ──

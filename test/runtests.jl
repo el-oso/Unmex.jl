@@ -173,6 +173,14 @@ end
     @test occursin("Unmex:double_it:nargin", out)             # error id scanned
     # accepts a path too (one-shot), and the strings scan is independent of calling.
     @test !isempty(Unmex._scan_contract_strings(DOUBLE_IT))
+
+    # scan-only mode (call=false) must not invoke the MEX (no arity sweep), but still scans.
+    buf2 = IOBuffer()
+    probe(buf2, mex; call = false)
+    out2 = String(take!(buf2))
+    @test occursin("call=false", out2)
+    @test !occursin("nargs=", out2)
+    @test occursin("Unmex:double_it:nargin", out2)
 end
 
 @testset "graceful failure on interpreter-only MEX (no crash)" begin
