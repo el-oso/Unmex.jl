@@ -72,6 +72,16 @@ function __init__()
         for f in files
             push!(_HOST, dlopen(f, RTLD_GLOBAL | RTLD_NOW))
         end
+        # Optional BLAS bridge: lets MEX that link MATLAB's BLAS resolve `libmwblas.so`
+        # (forwards to libblastrampoline → OpenBLAS/MKL). Non-fatal if absent or unbuilt.
+        blas = joinpath(dirname(@__DIR__), "runtime", "libmwblas.so")
+        if Sys.islinux() && isfile(blas)
+            try
+                push!(_HOST, dlopen(blas, RTLD_GLOBAL | RTLD_NOW))
+            catch e
+                @warn "Unmex: BLAS bridge libmwblas.so failed to load (BLAS MEX won't resolve)" exception = e
+            end
+        end
     else
         # Don't hard-fail at load (keeps `using Unmex` usable for docs/inspection);
         # MEX calls error clearly via `_ensure_host()` until the host is built.

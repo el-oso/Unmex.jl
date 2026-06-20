@@ -182,6 +182,19 @@ end
         @test call(mex, 1.0) == 1.0
     end
 
+    @testset "BLAS via libmwblas → libblastrampoline (proxy_blas: C = A*B)" begin
+        # A MEX calling MATLAB's ILP64 dgemm_, resolved through the libmwblas.so bridge.
+        if Sys.islinux() && isfile(joinpath(ROOT, "runtime", "libmwblas.so"))
+            mex = open_mex(build_cmex("proxy_blas"))
+            A = [1.0 2.0; 3.0 4.0]
+            B = [5.0 6.0; 7.0 8.0]
+            @test call(mex, A, B) ≈ A * B
+            C = randn(4, 3)
+            D = randn(3, 5)
+            @test call(mex, C, D) ≈ C * D
+        end
+    end
+
 end
 
 @testset "probe — best-effort introspection of an opaque MEX" begin

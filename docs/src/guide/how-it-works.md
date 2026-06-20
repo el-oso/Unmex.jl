@@ -83,6 +83,11 @@ Two things differ between a hand-compiled C MEX and a genuine MATLAB `.mexa64`:
    (`cruntime/libmxhost_cpp.cpp`) that re-declares the namespaces/classes and **forwards to
    the C functions** (interpreter-coupled ones raise gracefully). LibMx compiles and links
    it into the host.
+4. **BLAS.** Numeric MEX link MATLAB's BLAS (`libmwblas.so`, ILP64, plain Fortran names like
+   `dgemm_`). A tiny `libmwblas.so` bridge (`runtime/libmwblas_shim.c`) forwards those to
+   Julia's `libblastrampoline` `_64_` (ILP64) entry points via signature-agnostic tail-call
+   trampolines — already routed to a real BLAS (OpenBLAS, or **MKL — MATLAB's own backend —
+   after `using MKL`**, giving bit-identical results). No bundled BLAS, no `LD_LIBRARY_PATH`.
 
 A MEX (C or C++) that depends only on `libmx`/`libmex` (plus standard system libraries)
 therefore **loads and runs**. Verified end to end against a real MATLAB install: a

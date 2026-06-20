@@ -62,8 +62,11 @@ modern C++-compiled MEX link too. Built under the `libmx.so`/`libmex.so` sonames
 satisfies a MEX's `DT_NEEDED`, so **genuine MATLAB-compiled `.mexa64` (C or C++) that
 depend only on `libmx`/`libmex` load and can be called** — verified against a real MATLAB
 install's MEX corpus (e.g. a C++ code-beautifier MEX called from Julia, no MATLAB, correctly
-reformats a file). MEX that also pull in interpreter libraries (`libmwfl`,
-`libmwm_interpreter`, …) or call back into MATLAB
+reformats a file). A small **`libmwblas.so` bridge** forwards MATLAB's ILP64 BLAS to Julia's
+`libblastrampoline` (OpenBLAS by default; **Intel MKL — MATLAB's own backend — after `using
+MKL`, for bit-identical results**), so MEX that link MATLAB's BLAS load and run too. MEX
+that also pull in interpreter/codegen libraries (`libmwfl`, `libmwm_interpreter`,
+`libemlrt`, …) or call back into MATLAB
 (`mexCallMATLAB` for a real builtin, `mexEvalString`, …) need a live interpreter;
 the host can't fabricate those, but it fails **gracefully** — a catchable Julia
 error instead of a crash. Function handles, classdef objects, and opaque types are
