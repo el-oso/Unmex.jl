@@ -1,6 +1,6 @@
-# Build the host libmx first so Unmex.__init__ can dlopen it during `using Unmex`.
-include(joinpath(@__DIR__, "..", "deps", "build.jl"))
-
+# The host libmx isn't needed to render docs: Documenter only reads docstrings, and
+# Unmex.__init__ just warns (does not fail) when the host .so is absent. Building it here
+# would require LibMx as a direct docs dep (the host source now lives in LibMx), so skip it.
 using Documenter, DocumenterVitepress, Unmex
 
 makedocs(;
