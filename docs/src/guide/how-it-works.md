@@ -55,11 +55,13 @@ tables.
 
 ## The host library
 
-`runtime/libmxhost.c` is a from-scratch, MATLAB-free implementation of the libmx
-Matrix API (grown from Mexicah's libmx test stub). Because an `mxArray` is opaque to
-the MEX — it only ever calls accessor functions — the host controls the struct
-layout internally and a faithful set of `mx*` accessors is enough to serve a
-well-behaved MEX.
+The host (`cruntime/libmxhost.c`) is a from-scratch, MATLAB-free implementation of the
+libmx Matrix API. It is **owned by LibMx** — one canonical source shared with Mexicah's
+tests — and `deps/build.jl` compiles it into `runtime/`. Because an `mxArray` is opaque
+to the MEX — it only ever calls accessor functions — the host controls the struct layout
+internally, and a faithful set of `mx*`/`mex*` functions (memory, introspection, field
+and data accessors/mutators, strings) plus the `_730` large-array aliases that
+MATLAB-compiled MEX link against is enough to serve a well-behaved MEX.
 
 ## Interpreter-only MEX
 

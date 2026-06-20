@@ -20,7 +20,7 @@ hero:
 features:
   - title: No MATLAB required
     icon: 🧩
-    details: "Unmex ships its own host libmx/libmex, so a MEX's mx*/mex* symbols resolve without a MATLAB install."
+    details: "Unmex builds a from-scratch host libmx/libmex (shared via LibMx), so a MEX's mx*/mex* symbols — including the _730 large-array aliases MATLAB-compiled binaries link — resolve without a MATLAB install."
   - title: Errors, not crashes
     icon: 🛟
     details: "A MEX's mexErrMsgIdAndTxt unwinds through a setjmp/longjmp shim and surfaces as a catchable Julia exception."
@@ -49,8 +49,9 @@ callmex("double_it.mexa64", 5.0)     # one-shot → 10.0
 A MEX is a shared library exporting one C symbol —
 `void mexFunction(int nlhs, mxArray *plhs[], int nrhs, mxArray *prhs[])` — whose
 `mx*`/`mex*` references resolve from `libmx`/`libmex` at load time. **No MATLAB is
-needed**: Unmex provides those symbols itself via a bundled host library
-(`runtime/libmxhost`, grown from Mexicah's libmx test stub).
+needed**: Unmex provides those symbols itself via a host library built from LibMx's
+canonical C source (`cruntime/libmxhost.c`, shared with Mexicah's tests), which
+`deps/build.jl` compiles into `runtime/`.
 
 ## Status
 

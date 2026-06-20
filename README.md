@@ -9,10 +9,12 @@
 (Julia is the callee); Unmex `dlopen`s an existing `.mex*` and *calls* it (Julia is
 the caller), converting `mxArray`s ↔ Julia values.
 
-**No MATLAB required.** Unmex ships its own host `libmx`/`libmex`
-(`runtime/libmxhost.c`) that provides the `mx*`/`mex*` symbols a MEX resolves at
-load time. The mxArray FFI + marshaling core is shared with Mexicah via
-[LibMx](https://github.com/el-oso/LibMx.jl).
+**No MATLAB required.** Unmex builds a from-scratch host `libmx`/`libmex` that provides
+the `mx*`/`mex*` symbols a MEX resolves at load time — including the `_730` large-array
+aliases that MATLAB-compiled binaries link against. The host C source
+(`cruntime/libmxhost.c`) and the mxArray FFI + marshaling core both live in
+[LibMx](https://github.com/el-oso/LibMx.jl) (shared with Mexicah); `deps/build.jl`
+compiles the host into `runtime/`.
 
 ## Installation
 
@@ -48,7 +50,10 @@ See the [documentation](https://el-oso.github.io/Unmex.jl/dev) for how it works.
 
 The full self-contained MATLAB type set round-trips in and out — the numeric tower
 (int8/16/32/64, uint8/16/32/64, single, double), complex, logical, char/string,
-string arrays, sparse, struct, and cell. MEX that call back into MATLAB
+string arrays, sparse, struct, and cell. The host implements the common `mx*`/`mex*`
+API surface (memory, introspection, field/data accessors and mutators, strings) plus the
+`_730` large-array aliases, so MATLAB-compiled MEX link against it. MEX that call back
+into MATLAB
 (`mexCallMATLAB` for a real builtin, `mexEvalString`, …) need a live interpreter;
 the host can't fabricate those, but it fails **gracefully** — a catchable Julia
 error instead of a crash. Function handles, classdef objects, and opaque types are
