@@ -57,8 +57,8 @@ end
         @test rt([1.0 2.0; 3.0 4.0]) == [1.0 2.0; 3.0 4.0]
     end
     @testset "complex (double + single)" begin
-        @test rt([1.0+2im 3.0-4im]) == [1.0+2im 3.0-4im]
-        @test rt(ComplexF32[1+2im 3-4im]) == ComplexF32[1+2im 3-4im]
+        @test rt([1.0 + 2im 3.0 - 4im]) == [1.0 + 2im 3.0 - 4im]
+        @test rt(ComplexF32[1 + 2im 3 - 4im]) == ComplexF32[1 + 2im 3 - 4im]
     end
     @testset "logical" begin
         @test rt(true) === true
@@ -160,6 +160,19 @@ end
         @test call(mex, 1.0) == 1.0
     end
 
+end
+
+@testset "probe — best-effort introspection of an opaque MEX" begin
+    mex = open_mex(DOUBLE_IT)
+    buf = IOBuffer()
+    probe(buf, mex)
+    out = String(take!(buf))
+    @test occursin("entry point: mexFunction", out)
+    @test occursin("nargs=1 → OK", out)                       # arity discovered by sweep
+    @test occursin("double_it expects exactly 1 input", out)  # contract string scanned
+    @test occursin("Unmex:double_it:nargin", out)             # error id scanned
+    # accepts a path too (one-shot), and the strings scan is independent of calling.
+    @test !isempty(Unmex._scan_contract_strings(DOUBLE_IT))
 end
 
 @testset "graceful failure on interpreter-only MEX (no crash)" begin

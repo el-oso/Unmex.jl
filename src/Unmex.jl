@@ -37,7 +37,7 @@ using LibMx: MxArray, store_result, load,
     mx_get_number_of_elements, mx_get_number_of_dimensions, mx_get_cell,
     mx_get_field, mx_get_field_name_by_number, mx_get_number_of_fields, mx_destroy_array
 
-export open_mex, call, callmex
+export open_mex, call, callmex, probe
 
 # The host models R2016b `string` arrays as this class (libmxhost.c); not in LibMx's
 # legacy enum (which stops at mxOBJECT_CLASS = 18).
@@ -178,5 +178,7 @@ function _destroy_all(ptrs)
     end
     return
 end
+
+include("probe.jl")
 
 end # module Unmex

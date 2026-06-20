@@ -39,6 +39,9 @@ mex = open_mex("double_it.mexa64")
 call(mex, [1.0 2.0; 3.0 4.0])     # → [2.0 4.0; 6.0 8.0]
 call(mex, 3.0)                    # → 6.0
 callmex("double_it.mexa64", 5.0)  # one-shot → 10.0
+
+probe(mex)                        # a MEX carries no signature metadata; probe sweeps
+                                  # arities/types and scans the binary for its contract
 ```
 
 A MEX's `mexErrMsgIdAndTxt` is turned into a catchable Julia `ErrorException`

@@ -83,3 +83,31 @@ The one remaining hard-crash path is a MEX that calls `mexCallMATLAB` and then d
 its (untouched) output **without** the call unwinding first — which the host's raise
 now prevents in the common case. A MEX that references an `mx*` accessor the host
 doesn't implement yet fails cleanly at `open_mex` with an undefined-symbol error.
+
+## The call signature is opaque
+
+A `.mex*` exports exactly one C symbol — `mexFunction(nlhs, plhs, nrhs, prhs)` — and
+carries **no signature metadata**: no argument count, no types, nothing in the symbol
+table but `mexFunction`. The "signature" exists only as the runtime checks inside that
+function (`if (nrhs != 1) …`, `mxIsDouble(prhs[0])`, …) and in whatever docs the author
+shipped. You recover it indirectly: read the author's `.m` help / source if you have it,
+run `strings` over the binary (the `mexErrMsgIdAndTxt` texts often spell out the
+contract), or **probe it** — call with trial inputs and read the catchable errors.
+
+[`probe`](@ref Unmex.probe) automates the last two: it sweeps input arities, tries a few
+argument types at the smallest arity that works, and scans the binary for contract
+strings — reporting what it finds. Because a MEX can be polymorphic (branching on count,
+type, or a leading command string), treat the result as discovery, not a guaranteed spec.
+
+```julia
+julia> probe("double_it.mexa64")
+Probing "double_it.mexa64"  (entry point: mexFunction)
+
+Arity sweep (2×2 Matrix{Float64} per argument):
+  nargs=0 → MEX raised [Unmex:double_it:nargin]: double_it expects exactly 1 input
+  nargs=1 → OK, returns Float64 2×2
+  …
+Embedded contract strings (2):
+  double_it expects exactly 1 input
+  Unmex:double_it:nargin
+```
