@@ -160,6 +160,13 @@ end
         @test call(mex, 1.0) == 1.0
     end
 
+    @testset "_800 version aliases (proxy800 — modern MATLAB ABI)" begin
+        # Real modern MATLAB-compiled MEX link mx*_800/mex*_800; this MEX uses only those.
+        mex = open_mex(build_cmex("proxy800"))
+        @test call(mex, 4.0) == reshape(1.0:4.0, 1, 4)
+        @test call(mex, 1.0) == 1.0
+    end
+
 end
 
 @testset "probe — best-effort introspection of an opaque MEX" begin

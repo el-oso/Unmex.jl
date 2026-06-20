@@ -49,25 +49,39 @@ const mxSTRING_CLASS = Cint(19)
 include("converters.jl")
 include("contracts.jl")
 
-const _HOST = Ref{Ptr{Cvoid}}(C_NULL)
+const _HOST = Ptr{Cvoid}[]
 
-_host_path() = joinpath(dirname(@__DIR__), "runtime", "libmxhost.$(Libdl.dlext)")
+# On Linux, real MATLAB-compiled MEX carry `DT_NEEDED` entries for `libmx.so`/`libmex.so`,
+# so the host must be loadable under those exact sonames: `deps/build.jl` builds two copies
+# (sonames `libmx.so`/`libmex.so`) and we `dlopen` both `RTLD_GLOBAL` so the loader satisfies
+# a MEX's `DT_NEEDED` from the already-loaded host (no `LD_LIBRARY_PATH` needed). Hand-written
+# C test MEX (no `DT_NEEDED`) bind their `mx*` symbols from the same global pool. Elsewhere a
+# single `libmxhost.<dlext>`.
+function _host_files()
+    rt = joinpath(dirname(@__DIR__), "runtime")
+    return if Sys.islinux()
+        [joinpath(rt, "libmx.so"), joinpath(rt, "libmex.so")]
+    else
+        [joinpath(rt, "libmxhost.$(Libdl.dlext)")]
+    end
+end
 
 function __init__()
-    path = _host_path()
-    if isfile(path)
-        # RTLD_GLOBAL so a subsequently-dlopen'd MEX binds its mx*/mex* symbols here.
-        _HOST[] = dlopen(path, RTLD_GLOBAL | RTLD_NOW)
+    files = _host_files()
+    if all(isfile, files)
+        for f in files
+            push!(_HOST, dlopen(f, RTLD_GLOBAL | RTLD_NOW))
+        end
     else
         # Don't hard-fail at load (keeps `using Unmex` usable for docs/inspection);
         # MEX calls error clearly via `_ensure_host()` until the host is built.
-        @warn "Unmex: host libmx not built at $path; run `julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))`. MEX calls will fail until then."
+        @warn "Unmex: host libmx not built; run `julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))`. MEX calls will fail until then." files
     end
     return
 end
 
 function _ensure_host()
-    _HOST[] == C_NULL && error(
+    isempty(_HOST) && error(
         "Unmex: host libmx is not loaded. Build it with " *
             "`julia $(joinpath(dirname(@__DIR__), "deps", "build.jl"))` and reload Unmex.",
     )
