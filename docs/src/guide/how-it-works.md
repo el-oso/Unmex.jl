@@ -76,13 +76,20 @@ Two things differ between a hand-compiled C MEX and a genuine MATLAB `.mexa64`:
    (`LibMx.build_libmxhost(...; soname="libmx.so")`) and `__init__` `dlopen`s both
    `RTLD_GLOBAL` — so a MEX's `DT_NEEDED` is satisfied by the already-loaded host, with no
    `LD_LIBRARY_PATH`.
+3. **The C++ `mxArray` API.** Modern MEX compiled from C++ import MATLAB's C++ API —
+   mangled symbols like `matrix::detail::noninlined::mx_array_api::mxCreateDoubleMatrix` and
+   `mxArray_tag` member functions — not just the C names. These are thin wrappers around the
+   same C API, and Itanium mangling is deterministic, so the host ships a C++ layer
+   (`cruntime/libmxhost_cpp.cpp`) that re-declares the namespaces/classes and **forwards to
+   the C functions** (interpreter-coupled ones raise gracefully). LibMx compiles and links
+   it into the host.
 
-A MEX that depends only on `libmx`/`libmex` (plus standard system libraries) therefore
-**loads and runs**. Verified end to end against a real MATLAB install: a point-in-polygon
-`.mexa64` — `(points N×2, vertices M×2) -> logical N×1` — called from Julia with no MATLAB
-returns results identical to an independent Julia implementation. A MEX that also needs
-MATLAB's internal libraries (`libmwfl`, `libmwm_interpreter`, …) fails cleanly at
-`open_mex` with an undefined-library/symbol error.
+A MEX (C or C++) that depends only on `libmx`/`libmex` (plus standard system libraries)
+therefore **loads and runs**. Verified end to end against a real MATLAB install: a
+point-in-polygon `.mexa64` returns results identical to an independent Julia implementation,
+and a C++ code-beautifier `.mexa64` called from Julia (no MATLAB) correctly reformats a C
+file. A MEX that also needs MATLAB's internal libraries (`libmwfl`, `libmwm_interpreter`,
+…) fails cleanly at `open_mex` with an undefined-library/symbol error.
 
 !!! warning "Calling an unknown MEX is unsafe"
     A MEX trusts its inputs — calling one with the wrong arity/types can dereference a

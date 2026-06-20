@@ -56,11 +56,14 @@ The full self-contained MATLAB type set round-trips in and out — the numeric t
 string arrays, sparse, struct, and cell. The host implements the common `mx*`/`mex*`
 API surface (memory, introspection, field/data accessors and mutators, strings) and
 aliases every function to the `_700`/`_730`/`_800` versioned names real MATLAB releases
-link against. Built under the `libmx.so`/`libmex.so` sonames, it satisfies a MEX's
-`DT_NEEDED`, so **genuine MATLAB-compiled `.mexa64` that depend only on `libmx`/`libmex`
-load and can be called** (verified against a real MATLAB install's MEX corpus). MEX that
-also pull in interpreter libraries (`libmwfl`, `libmwm_interpreter`, …) or call back
-into MATLAB
+link against. It also provides MATLAB's **C++ `mxArray` API** (the
+`matrix::detail::…`/`mxArray_tag::…` mangled symbols, forwarding to the C functions), so
+modern C++-compiled MEX link too. Built under the `libmx.so`/`libmex.so` sonames, it
+satisfies a MEX's `DT_NEEDED`, so **genuine MATLAB-compiled `.mexa64` (C or C++) that
+depend only on `libmx`/`libmex` load and can be called** — verified against a real MATLAB
+install's MEX corpus (e.g. a C++ code-beautifier MEX called from Julia, no MATLAB, correctly
+reformats a file). MEX that also pull in interpreter libraries (`libmwfl`,
+`libmwm_interpreter`, …) or call back into MATLAB
 (`mexCallMATLAB` for a real builtin, `mexEvalString`, …) need a live interpreter;
 the host can't fabricate those, but it fails **gracefully** — a catchable Julia
 error instead of a crash. Function handles, classdef objects, and opaque types are

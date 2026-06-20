@@ -7,10 +7,18 @@ const ROOT = dirname(@__DIR__)
 include(joinpath(ROOT, "deps", "build.jl"))
 
 const CC = something(Sys.which("cc"), Sys.which("gcc"), Sys.which("clang"))
+const CXX = something(Sys.which("g++"), Sys.which("c++"), Sys.which("clang++"), CC)
 function build_cmex(name)
     src = joinpath(ROOT, "test", "cmex", "$name.c")
     out = joinpath(ROOT, "test", "cmex", "$name.$(Libdl.dlext)")
     run(`$CC -O2 -shared -fPIC -o $out $src`)
+    return out
+end
+# A C++ test MEX (uses MATLAB's C++ mxArray API, like a real C++-compiled MEX).
+function build_cmex_cpp(name)
+    src = joinpath(ROOT, "test", "cmex", "$name.cpp")
+    out = joinpath(ROOT, "test", "cmex", "$name.$(Libdl.dlext)")
+    run(`$CXX -O2 -shared -fPIC -std=c++20 -o $out $src`)
     return out
 end
 const DOUBLE_IT = build_cmex("double_it")
@@ -163,6 +171,13 @@ end
     @testset "_800 version aliases (proxy800 — modern MATLAB ABI)" begin
         # Real modern MATLAB-compiled MEX link mx*_800/mex*_800; this MEX uses only those.
         mex = open_mex(build_cmex("proxy800"))
+        @test call(mex, 4.0) == reshape(1.0:4.0, 1, 4)
+        @test call(mex, 1.0) == 1.0
+    end
+
+    @testset "C++ mxArray API (proxy_cpp — matrix::detail mangled symbols)" begin
+        # A C++ MEX using MATLAB's C++ mx-API; the host's C++ forwarders must resolve it.
+        mex = open_mex(build_cmex_cpp("proxy_cpp"))
         @test call(mex, 4.0) == reshape(1.0:4.0, 1, 4)
         @test call(mex, 1.0) == 1.0
     end
