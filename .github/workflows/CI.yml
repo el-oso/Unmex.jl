@@ -30,3 +30,11 @@ jobs:
       # test/runtests.jl builds the host libmx (deps/build.jl) via the C compiler
       # already present on the runner, then exercises a C MEX with no MATLAB.
       - uses: julia-actions/julia-runtest@v1
+      - uses: julia-actions/julia-processcoverage@v1
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: lcov.info
+          format: lcov
+          fail-on-error: false

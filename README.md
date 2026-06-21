@@ -2,6 +2,7 @@
 
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://el-oso.github.io/Unmex.jl/dev)
 [![Build Status](https://github.com/el-oso/Unmex.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/el-oso/Unmex.jl/actions/workflows/CI.yml?query=branch%3Amaster)
+[![Coverage](https://coveralls.io/repos/github/el-oso/Unmex.jl/badge.svg?branch=master)](https://coveralls.io/github/el-oso/Unmex.jl?branch=master)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Call a MATLAB MEX file from Julia — the inverse of
